@@ -1,24 +1,45 @@
 import streamlit as st
 import pandas as pd
 
+# ------------------------------------------------------
+# Page configuration
+# ------------------------------------------------------
+# Sets the browser tab title and uses the full page width.
+# "wide" gives the dashboard more horizontal space for tables and heatmaps.
 st.set_page_config(page_title="ABS Challenge Engine", layout="wide")
 
+# ------------------------------------------------------
+# Load model output data
+# ------------------------------------------------------
+# This CSV is the final processed table created by the analysis pipeline.
+# Each row represents a count / outs / base-state situation and its estimated
+# run value from a successful ABS challenge.
 df = pd.read_csv("processed_data/challenge_value_table.csv")
 
+# Main dashboard title
 st.title("ABS Challenge Decision Engine")
 
-# Sidebar filters
+# ------------------------------------------------------
+# Sidebar: user inputs
+# ------------------------------------------------------
+# These filters allow the user to select the exact game situation they want
+# to evaluate. Streamlit automatically reruns the app whenever a selection changes.
 st.sidebar.header("Game Situation")
 
 count = st.sidebar.selectbox("Count", sorted(df["count"].unique()))
 outs = st.sidebar.selectbox("Outs", sorted(df["outs_label"].unique()))
 base = st.sidebar.selectbox("Base State", sorted(df["base_state_label"].unique()))
 
+# This is a product-layer adjustment.
+# The base model only values the count/base/out state.
+# This dropdown lets the user adjust for game urgency, such as inning and score.
 game_context = st.sidebar.selectbox(
     "Game Context (Inning + Score Differential)",
     ["Low Leverage", "Medium Leverage", "High Leverage", "Critical"]
 )
 
+# Maps the selected game context to a multiplier.
+# Higher leverage situations increase the final decision score.
 leverage_map = {
     "Low Leverage": 0.75,
     "Medium Leverage": 1.00,
@@ -28,12 +49,22 @@ leverage_map = {
 
 leverage_multiplier = leverage_map[game_context]
 
+# ------------------------------------------------------
+# Filter data to selected game situation
+# ------------------------------------------------------
+# This pulls the one row from the challenge value table that matches
+# the selected count, outs, and base state.
 filtered = df[
     (df["count"] == count) &
     (df["outs_label"] == outs) &
     (df["base_state_label"] == base)
 ]
 
+# ------------------------------------------------------
+# Recommendation logic
+# ------------------------------------------------------
+# Converts the adjusted run value into a readable recommendation.
+# These thresholds create simple decision tiers for the user.
 def adjusted_recommendation(value):
     if value >= 1.25:
         return "Challenge aggressively"
@@ -44,16 +75,26 @@ def adjusted_recommendation(value):
     else:
         return "Do not challenge unless highly confident"
 
+
 st.divider()
 
+# ------------------------------------------------------
 # Main Decision Panel
+# ------------------------------------------------------
 st.header("Decision Recommendation")
 
+# If the selected situation exists in the data, calculate the adjusted score.
 if not filtered.empty:
     row = filtered.iloc[0]
+
+    # Base challenge value is multiplied by the selected game leverage.
+    # Example: a 0.80 run value in a Critical context becomes 1.20.
     adjusted_value = row["challenge_value"] * leverage_multiplier
+
+    # Convert numeric decision score into a readable recommendation.
     final_reco = adjusted_recommendation(adjusted_value)
 
+    # Display the three main dashboard metrics.
     col1, col2, col3 = st.columns(3)
 
     col1.metric("Base Run Value", f"{row['challenge_value']:.3f} runs")
@@ -62,6 +103,7 @@ if not filtered.empty:
 
     st.subheader("Final Decision")
 
+    # Use different Streamlit message styles depending on recommendation strength.
     if adjusted_value >= 1.25:
         st.success(final_reco)
     elif adjusted_value >= 0.75:
@@ -71,20 +113,31 @@ if not filtered.empty:
     else:
         st.error(final_reco)
 
+    # Explain how the final score was adjusted.
     st.caption(
-        f"Leverage: {game_context} ({leverage_multiplier}x) • Score reflects game context (Inning + Score Differential)"
+        f"Leverage: {game_context} ({leverage_multiplier}x) • "
+        "Score reflects game context (Inning + Score Differential)"
     )
 
 else:
+    # Fallback message if the selected combination does not exist in the data.
     st.warning("No data available for this situation")
+
 
 st.divider()
 
-# Strategy Insights
+# ------------------------------------------------------
+# Strategy Insights Section
+# ------------------------------------------------------
 st.header("Strategy Insights")
 
+# ------------------------------------------------------
+# Top Challenge Situations Table
+# ------------------------------------------------------
 st.subheader("Top Challenge Situations")
 
+# Selects the most important columns for a clean display table.
+# Assumes the CSV is already sorted by challenge value.
 table = df[[
     "count",
     "outs_label",
@@ -93,6 +146,8 @@ table = df[[
     "tier"
 ]].head(15).copy()
 
+# Format the table for easier reading.
+# challenge_value is rounded to three decimals.
 styled_table = table.style.set_properties(**{
     "text-align": "left"
 }).format({
@@ -101,14 +156,21 @@ styled_table = table.style.set_properties(**{
 
 st.dataframe(styled_table, use_container_width=True)
 
+# ------------------------------------------------------
+# Challenge Value Heatmap
+# ------------------------------------------------------
 st.subheader("Challenge Value Heatmap")
 
+# Lets the user choose which out state to visualize.
+# Defaults to the same outs value selected in the sidebar.
 heatmap_outs = st.selectbox(
     "Select outs for heatmap",
     sorted(df["outs_label"].unique()),
     index=sorted(df["outs_label"].unique()).index(outs)
 )
 
+# Manually defined baseball-friendly order for base states.
+# This prevents the table from appearing in random alphabetical order.
 base_state_order = [
     "Bases Empty",
     "Runner on 1st",
@@ -120,6 +182,8 @@ base_state_order = [
     "Bases Loaded"
 ]
 
+# Manually defined count order.
+# This keeps counts displayed in normal baseball progression.
 count_order = [
     "0-0", "0-1", "0-2",
     "1-0", "1-1", "1-2",
@@ -127,6 +191,10 @@ count_order = [
     "3-0", "3-1", "3-2"
 ]
 
+# Build a matrix where:
+# rows = count
+# columns = base state
+# values = average challenge value
 heatmap_df = df[df["outs_label"] == heatmap_outs].pivot_table(
     index="count",
     columns="base_state_label",
@@ -134,8 +202,12 @@ heatmap_df = df[df["outs_label"] == heatmap_outs].pivot_table(
     aggfunc="mean"
 )
 
+# Reorder rows and columns into baseball-friendly order.
 heatmap_df = heatmap_df.reindex(index=count_order, columns=base_state_order)
 
+# Apply background color gradient.
+# Higher challenge values appear darker.
+# NOTE: This requires matplotlib in requirements.txt on Streamlit Cloud.
 styled_heatmap = heatmap_df.style.background_gradient(
     axis=None
 ).format("{:.3f}")
@@ -143,9 +215,15 @@ styled_heatmap = heatmap_df.style.background_gradient(
 st.dataframe(styled_heatmap, use_container_width=True)
 
 st.caption(
-    "Darker cells represent higher run value from a successful challenge in that count, out, and base-state situation."
+    "Darker cells represent higher run value from a successful challenge "
+    "in that count, out, and base-state situation."
 )
 
+# ------------------------------------------------------
+# Written interpretation
+# ------------------------------------------------------
+# This section explains the model output in plain English so the dashboard
+# is not just a table of numbers. This is useful for non-technical viewers.
 st.subheader("High-Level Takeaways")
 
 st.markdown("""
