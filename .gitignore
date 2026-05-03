@@ -1,0 +1,10 @@
+# Raw data (large files)
+raw_data/
+raw_data/statcast_2025_full.csv
+
+# Processed large outputs
+processed_data/context_challenge_value.csv
+
+# Python
+__pycache__/
+*.pyc
